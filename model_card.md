@@ -31,17 +31,17 @@ Think of it as a judge holding a scorecard for every song:
 
 The best possible score is 5.0. After every song is scored, they are sorted from highest to lowest (ties go to the song with the closer energy) and the top 5 are shown. Each point awarded is printed as a reason, like "genre match: pop (+2.0)."
 
-**Changes from the starter:** the starter returned an empty list. I implemented the CSV loader, the scoring rule, the ranking, the explanations, and the `Recommender` class, and I added the acoustic-preference bonus and a way to pass in different weights for experiments.
+**Changes from the starter:** the starter returned an empty list. I implemented the CSV loader, the scoring rule, the ranking, the explanations, and the `Recommender` class, and I added the acoustic-preference bonus and a way to pass in different weights for experiments. Later I added the optional extensions: five extra song features (decade, detailed mood tags, popularity, instrumental, live feel) that only count if the user asks for them, three scoring modes (genre-first, mood-first, energy-focused), an optional diversity penalty (-1 for a repeated artist, -0.5 for a repeated genre), and a summary table.
 
 ---
 
 ## 4. Data
 
 - **20 songs** in `data/songs.csv`. The starter had 10, and I added 10 more.
-- **Features per song:** genre, mood, energy, tempo (BPM), valence (positivity), danceability, acousticness. Only genre, mood, energy, and acousticness are used for scoring.
+- **Features per song:** genre, mood, energy, tempo (BPM), valence (positivity), danceability, acousticness, plus five advanced features: popularity (0–100), release decade, detailed mood tags, instrumentalness, and liveness. Genre, mood, energy, and acousticness are always scored; the advanced features are scored only when a profile asks for them. Tempo, valence, and danceability are not scored.
 - **17 genres** (pop, lofi, rock, ambient, jazz, synthwave, indie pop, hip-hop, metal, classical, country, r&b, edm, reggae, folk, blues, punk) and **16 moods** (happy, chill, intense, relaxed, moody, focused, confident, angry, peaceful, nostalgic, romantic, euphoric, uplifting, sad, melancholy, rebellious).
 - **What I added:** genres and moods the starter was missing, like metal/angry, classical/peaceful, folk/sad, and edm/euphoric, so very different users could be tested.
-- **What's missing:** most genres have only **one** song, so lofi (3) and pop (2) are over-represented compared with everything else. There is no non-English music, no lyrics, no release year, no popularity, and the numbers are my own estimates, not measured audio features.
+- **What's missing:** most genres have only **one** song, so lofi (3) and pop (2) are over-represented compared with everything else. There is no non-English music, no lyrics, and all the numbers (including popularity and decade) are my own estimates, not measured audio features.
 
 ---
 
@@ -94,14 +94,16 @@ I ran six profiles through `python -m src.main` and read the top 5 for each (ful
 
 **What surprised me:** how often the bottom of the top 5 was the same few songs, and how convincing the results looked even when they were clearly wrong, just because each one came with a list of reasons.
 
-I also ran the unit tests (`pytest`), which check that the OOP `Recommender` ranks the pop/happy song first and returns a non-empty explanation. Both pass.
+I also ran the unit tests (`pytest`). They check that the OOP `Recommender` ranks the pop/happy song first and explains it, plus the loader, scoring reasons, energy closeness, the advanced features, scoring modes, the diversity penalty, and the table. All 10 pass.
+
+**Extension checks:** switching to **mood-first** mode moved *Rooftop Lights* above *Gym Hero* for the pop fan, the same improvement the weight-shift experiment found. Turning on **diversity** for Chill Lofi replaced the second LoRoom song in the top 3 with the ambient track. The **Nostalgic Storyteller** profile (country, 1970s, warm/storytelling tags) pulled in a 1970s reggae song with a "warm" tag that the basic recipe would have left out of the top 5.
 
 ---
 
 ## 8. Future Work
 
 1. **Partial matches:** give some credit for related genres and moods ("indie pop" ≈ "pop", "relaxed" ≈ "chill") using a small similarity table instead of exact text.
-2. **Diversity rule:** penalize a song if its artist or genre is already in the top 5, so filler slots show variety instead of the same loud songs every time.
+2. **Smarter diversity:** the `--diverse` penalty I added is a fixed -1/-0.5. Next I'd make it adaptive (e.g. only kick in when the catalog has alternatives) and turn it on by default once it's tuned.
 3. **Use more features and multiple favorites:** add valence and tempo to the score, let users list several genres/moods, and tell the user when their genre isn't in the catalog.
 
 ---
@@ -114,4 +116,4 @@ I also ran the unit tests (`pytest`), which check that the OOP `Recommender` ran
 
 **What surprised me:** how much a few lines of arithmetic *feel* like a real recommendation. Printing "genre match (+2.0)" next to a song makes it look thoughtful even when the pick is questionable. That made me realize the explanation and presentation are a big part of why people trust apps like Spotify.
 
-**What I'd try next:** add collaborative filtering with a few fake users' play histories to see how "people like you also liked" changes the results, and add a diversity penalty so the top 5 isn't dominated by the same high-energy songs.
+**What I'd try next:** add collaborative filtering with a few fake users' play histories to see how "people like you also liked" changes the results, and tune the diversity penalty I added so it's on by default without hurting users of small genres.

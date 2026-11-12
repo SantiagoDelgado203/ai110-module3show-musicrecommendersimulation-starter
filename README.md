@@ -34,7 +34,8 @@ My simulation is a small **content-based** recommender. It has no other users to
 | `energy` | 0.0 – 1.0 | Yes (closeness to target) |
 | `acousticness` | 0.0 – 1.0 | Yes (small bonus) |
 | `tempo_bpm`, `valence`, `danceability` | numeric | Not yet, candidates for later experiments |
-| `id`, `title`, `artist` | identifiers | Display only |
+| `popularity`, `release_decade`, `mood_tags`, `instrumentalness`, `liveness` | advanced (Challenge 1) | Yes, only when the profile asks for them (see [Optional Extensions](#optional-extensions)) |
+| `id`, `title`, `artist` | identifiers | Display only (`artist` is also used by the diversity penalty) |
 
 **`UserProfile`**
 
@@ -121,6 +122,21 @@ pip install -r requirements.txt
 
 ```bash
 python -m src.main
+```
+
+   Optional flags (combine freely):
+
+   | Flag | What it does |
+   | --- | --- |
+   | `--list` | list profile names and scoring modes |
+   | `--profile NAME` | run only profiles whose name contains `NAME` (e.g. `--profile lofi`) |
+   | `--mode MODE` | `genre-first` (default), `mood-first`, or `energy-focused` |
+   | `--compare-modes` | run each profile under every scoring mode |
+   | `--diverse` | apply the diversity penalty to the top 5 |
+   | `--table` | print an ASCII summary table (with reasons) instead of lists |
+
+```bash
+python -m src.main --profile pop --compare-modes --table
 ```
 
 ### Running Tests
@@ -457,6 +473,203 @@ Profile: Conflicted (energy 0.9 + sad) [weight shift]
 - *Pop/happy:* *Rooftop Lights* (indie pop, happy) jumps from #3 to #2 and *Gym Hero* drops to #3. That feels **more** accurate: a happy indie-pop song is a better fit for a happy-pop listener than an intense workout track.
 - *Conflicted:* the gap between the folk/sad song (3.53) and the loud songs (~3.0) shrinks from 2.5 points to 0.5. The system now mostly trusts energy, which is just as wrong in the other direction: it would happily recommend loud punk to someone who said they are sad.
 - Takeaway: the weights decide *whose* idea of a "vibe" wins. Lowering genre helps users whose favorite genre is mislabeled or rare, but makes energy so dominant that the top 5 for any high-energy user turns into the same handful of loud songs.
+
+---
+
+## Optional Extensions
+
+I implemented all four optional challenges. With no flags, the original six profiles produce exactly the same output as before, because each extension is opt-in. `pytest` covers all four (10 tests pass).
+
+### Challenge 1: Advanced song features
+
+I added five columns to `data/songs.csv` for all 20 songs:
+
+| Column | Range | Scored as | Max points |
+| --- | --- | --- | --- |
+| `popularity` | 0–100 | `likes_popular`: hits get more if True, deep cuts get more if False | +0.3 |
+| `release_decade` | 1960–2020 | `decade`: exact decade = full, neighbouring decade = half | +0.5 |
+| `mood_tags` | 3 detailed tags, `;`-separated (e.g. `aggressive;driving;anthemic`) | `mood_tags`: +0.3 per matching tag, max 2 | +0.6 |
+| `instrumentalness` | 0.0–1.0 | `wants_instrumental`: same "fit" idea as acousticness | +0.3 |
+| `liveness` | 0.0–1.0 | `likes_live`: live/room feel vs. studio polish | +0.2 |
+
+Each new rule only fires when the profile sets that preference, and the printed max score adjusts to match (`max_score()` in `recommender.py`). The new **Nostalgic Storyteller** profile uses all of them:
+
+```
+================================================================
+Profile: Nostalgic Storyteller
+  (genre=country, mood=nostalgic, energy=0.5, likes_acoustic=True, decade=1970, mood_tags=['storytelling', 'warm'], likes_popular=False, wants_instrumental=False, likes_live=True)
+----------------------------------------------------------------
+1. Dusty Porch Swing by Willow Creek Band  [country, nostalgic]
+   Score: 6.36 / 6.90
+     - genre match: country (+2.0)
+     - mood match: nostalgic (+1.0)
+     - energy 0.55 vs target 0.50 (+1.42)
+     - acoustic sound fit (+0.34)
+     - from the 1970s (+0.50)
+     - mood tags: storytelling, warm (+0.60)
+     - deep cut, popularity 61 (+0.12)
+     - vocal fit (+0.29)
+     - live feel fit (+0.09)
+2. Crossroads Whiskey by Delta Lou  [blues, melancholy]
+   Score: 2.92 / 6.90
+     - energy 0.44 vs target 0.50 (+1.41)
+     - acoustic sound fit (+0.38)
+     - from the 1960s (+0.25)
+     - mood tags: storytelling (+0.30)
+     - deep cut, popularity 36 (+0.19)
+     - vocal fit (+0.28)
+     - live feel fit (+0.12)
+3. Island Slow Wind by Root Harbor  [reggae, uplifting]
+   Score: 2.91 / 6.90
+     - energy 0.58 vs target 0.50 (+1.38)
+     - acoustic sound fit (+0.23)
+     - from the 1970s (+0.50)
+     - mood tags: warm (+0.30)
+     - deep cut, popularity 57 (+0.13)
+     - vocal fit (+0.27)
+     - live feel fit (+0.11)
+4. Velvet After Hours by Sienna Rae  [r&b, romantic]
+   Score: 2.38 / 6.90
+     - energy 0.52 vs target 0.50 (+1.47)
+     - acoustic sound fit (+0.20)
+     - mood tags: warm (+0.30)
+     - deep cut, popularity 70 (+0.09)
+     - vocal fit (+0.29)
+     - live feel fit (+0.03)
+5. Coffee Shop Stories by Slow Stereo  [jazz, relaxed]
+   Score: 2.38 / 6.90
+     - energy 0.37 vs target 0.50 (+1.30)
+     - acoustic sound fit (+0.45)
+     - mood tags: warm (+0.30)
+     - deep cut, popularity 52 (+0.14)
+     - vocal fit (+0.12)
+     - live feel fit (+0.07)
+```
+
+The 1970s and "warm"/"storytelling" tags pull *Island Slow Wind* (reggae, 1970s, warm) into the top 3 even though its genre and mood both miss. The basic recipe could never have found that connection.
+
+### Challenge 2: Multiple scoring modes (Strategy pattern)
+
+`ScoringStrategy` in `recommender.py` packages a name, a description, and a set of weights behind one `score()` method. `STRATEGIES` holds three modes, and `recommend_songs(..., mode="mood-first")` swaps the "judge" without changing the ranking code:
+
+- **genre-first** (default): the original recipe.
+- **mood-first**: genre 1.0, mood 2.0, mood tags 1.0. For "I just want something happy."
+- **energy-focused**: genre 0.5, mood 0.5, energy 3.0. For workouts or focus sessions where intensity matters most.
+
+```
+Profile: High-Energy Pop (default) [genre-first]  (mode=genre-first)
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| # | Title             | Artist          | Genre / Mood | Score     | Reasons                            |
++===+===================+=================+==============+===========+====================================+
+| 1 | Sunrise City      | Neon Echo       | pop          | 4.88/5.00 | genre match: pop (+2.0)            |
+|   |                   |                 | happy        |           | mood match: happy (+1.0)           |
+|   |                   |                 |              |           | energy 0.82 vs target 0.80 (+1.47) |
+|   |                   |                 |              |           | produced sound fit (+0.41)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 2 | Gym Hero          | Max Pulse       | pop          | 3.78/5.00 | genre match: pop (+2.0)            |
+|   |                   |                 | intense      |           | energy 0.93 vs target 0.80 (+1.30) |
+|   |                   |                 |              |           | produced sound fit (+0.47)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 3 | Rooftop Lights    | Indigo Parade   | indie pop    | 2.77/5.00 | mood match: happy (+1.0)           |
+|   |                   |                 | happy        |           | energy 0.76 vs target 0.80 (+1.44) |
+|   |                   |                 |              |           | produced sound fit (+0.33)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 4 | Concrete Crown    | Block Theory    | hip-hop      | 1.91/5.00 | energy 0.78 vs target 0.80 (+1.47) |
+|   |                   |                 | confident    |           | produced sound fit (+0.44)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 5 | Paper Hearts Riot | The Static Kids | punk         | 1.82/5.00 | energy 0.89 vs target 0.80 (+1.36) |
+|   |                   |                 | rebellious   |           | produced sound fit (+0.46)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+
+Profile: High-Energy Pop (default) [mood-first]  (mode=mood-first)
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| # | Title             | Artist          | Genre / Mood | Score     | Reasons                            |
++===+===================+=================+==============+===========+====================================+
+| 1 | Sunrise City      | Neon Echo       | pop          | 4.88/5.00 | genre match: pop (+1.0)            |
+|   |                   |                 | happy        |           | mood match: happy (+2.0)           |
+|   |                   |                 |              |           | energy 0.82 vs target 0.80 (+1.47) |
+|   |                   |                 |              |           | produced sound fit (+0.41)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 2 | Rooftop Lights    | Indigo Parade   | indie pop    | 3.77/5.00 | mood match: happy (+2.0)           |
+|   |                   |                 | happy        |           | energy 0.76 vs target 0.80 (+1.44) |
+|   |                   |                 |              |           | produced sound fit (+0.33)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 3 | Gym Hero          | Max Pulse       | pop          | 2.78/5.00 | genre match: pop (+1.0)            |
+|   |                   |                 | intense      |           | energy 0.93 vs target 0.80 (+1.30) |
+|   |                   |                 |              |           | produced sound fit (+0.47)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 4 | Concrete Crown    | Block Theory    | hip-hop      | 1.91/5.00 | energy 0.78 vs target 0.80 (+1.47) |
+|   |                   |                 | confident    |           | produced sound fit (+0.44)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+| 5 | Paper Hearts Riot | The Static Kids | punk         | 1.82/5.00 | energy 0.89 vs target 0.80 (+1.36) |
+|   |                   |                 | rebellious   |           | produced sound fit (+0.46)         |
++---+-------------------+-----------------+--------------+-----------+------------------------------------+
+
+Profile: High-Energy Pop (default) [energy-focused]  (mode=energy-focused)
++---+------------------+---------------+--------------+-----------+------------------------------------+
+| # | Title            | Artist        | Genre / Mood | Score     | Reasons                            |
++===+==================+===============+==============+===========+====================================+
+| 1 | Sunrise City     | Neon Echo     | pop          | 4.35/4.50 | genre match: pop (+0.5)            |
+|   |                  |               | happy        |           | mood match: happy (+0.5)           |
+|   |                  |               |              |           | energy 0.82 vs target 0.80 (+2.94) |
+|   |                  |               |              |           | produced sound fit (+0.41)         |
++---+------------------+---------------+--------------+-----------+------------------------------------+
+| 2 | Rooftop Lights   | Indigo Parade | indie pop    | 3.71/4.50 | mood match: happy (+0.5)           |
+|   |                  |               | happy        |           | energy 0.76 vs target 0.80 (+2.88) |
+|   |                  |               |              |           | produced sound fit (+0.33)         |
++---+------------------+---------------+--------------+-----------+------------------------------------+
+| 3 | Gym Hero         | Max Pulse     | pop          | 3.58/4.50 | genre match: pop (+0.5)            |
+|   |                  |               | intense      |           | energy 0.93 vs target 0.80 (+2.61) |
+|   |                  |               |              |           | produced sound fit (+0.47)         |
++---+------------------+---------------+--------------+-----------+------------------------------------+
+| 4 | Concrete Crown   | Block Theory  | hip-hop      | 3.38/4.50 | energy 0.78 vs target 0.80 (+2.94) |
+|   |                  |               | confident    |           | produced sound fit (+0.44)         |
++---+------------------+---------------+--------------+-----------+------------------------------------+
+| 5 | Night Drive Loop | Neon Echo     | synthwave    | 3.24/4.50 | energy 0.75 vs target 0.80 (+2.85) |
+|   |                  |               | moody        |           | produced sound fit (+0.39)         |
++---+------------------+---------------+--------------+-----------+------------------------------------+
+```
+
+Switching to mood-first moves *Rooftop Lights* (happy indie pop) above *Gym Hero* (intense pop). In energy-focused mode, songs from any genre close to 0.8 energy fill the list.
+
+### Challenge 3: Diversity penalty
+
+With `--diverse`, the top 5 is chosen greedily: each pick gets **-1.0 if its artist is already listed** and **-0.5 if its genre is already listed**, and the penalty is shown as a reason. Without it, the Chill Lofi list has two LoRoom songs in the top 3; with it, the ambient track moves up to #3 and the second LoRoom song drops to #4:
+
+```
+Profile: Chill Lofi  (mode=genre-first, diverse)
++---+---------------------+----------------+--------------+-----------+-----------------------------------------+
+| # | Title               | Artist         | Genre / Mood | Score     | Reasons                                 |
++===+=====================+================+==============+===========+=========================================+
+| 1 | Library Rain        | Paper Lanterns | lofi         | 4.93/5.00 | genre match: lofi (+2.0)                |
+|   |                     |                | chill        |           | mood match: chill (+1.0)                |
+|   |                     |                |              |           | energy 0.35 vs target 0.35 (+1.50)      |
+|   |                     |                |              |           | acoustic sound fit (+0.43)              |
++---+---------------------+----------------+--------------+-----------+-----------------------------------------+
+| 2 | Midnight Coding     | LoRoom         | lofi         | 4.25/5.00 | genre match: lofi (+2.0)                |
+|   |                     |                | chill        |           | mood match: chill (+1.0)                |
+|   |                     |                |              |           | energy 0.42 vs target 0.35 (+1.40)      |
+|   |                     |                |              |           | acoustic sound fit (+0.35)              |
+|   |                     |                |              |           | diversity: genre already listed (-0.5)  |
++---+---------------------+----------------+--------------+-----------+-----------------------------------------+
+| 3 | Spacewalk Thoughts  | Orbit Bloom    | ambient      | 2.85/5.00 | mood match: chill (+1.0)                |
+|   |                     |                | chill        |           | energy 0.28 vs target 0.35 (+1.40)      |
+|   |                     |                |              |           | acoustic sound fit (+0.46)              |
++---+---------------------+----------------+--------------+-----------+-----------------------------------------+
+| 4 | Focus Flow          | LoRoom         | lofi         | 2.31/5.00 | genre match: lofi (+2.0)                |
+|   |                     |                | focused      |           | energy 0.40 vs target 0.35 (+1.42)      |
+|   |                     |                |              |           | acoustic sound fit (+0.39)              |
+|   |                     |                |              |           | diversity: artist already listed (-1.0) |
+|   |                     |                |              |           | diversity: genre already listed (-0.5)  |
++---+---------------------+----------------+--------------+-----------+-----------------------------------------+
+| 5 | Coffee Shop Stories | Slow Stereo    | jazz         | 1.92/5.00 | energy 0.37 vs target 0.35 (+1.47)      |
+|   |                     |                | relaxed      |           | acoustic sound fit (+0.45)              |
++---+---------------------+----------------+--------------+-----------+-----------------------------------------+
+```
+
+### Challenge 4: Visual summary table
+
+`--table` uses `format_table()` in `main.py`, a dependency-free ASCII table with wrapped multi-line cells. It shows rank, title, artist, genre/mood, score out of the profile's max, and **every reason** for the score (see the outputs above). I chose plain ASCII over `tabulate` so the project needs no extra install.
 
 ---
 
