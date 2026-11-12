@@ -136,16 +136,41 @@ You can add more tests in `tests/test_recommender.py`.
 
 ## Sample Recommendation Output
 
-Paste a sample of your recommender's output here as a text block so a reader can see what it produces:
+Output of `python -m src.main` for the default "High-Energy Pop" profile:
 
 ```
-# e.g.:
-# User profile: genre=indie, mood=chill, energy=low
-# Recommendations:
-#   1. ...
-#   2. ...
-#   3. ...
+Loaded songs: 20
+================================================================
+Profile: High-Energy Pop (default)
+  (genre=pop, mood=happy, energy=0.8, likes_acoustic=False)
+----------------------------------------------------------------
+1. Sunrise City by Neon Echo  [pop, happy]
+   Score: 4.88 / 5.00
+     - genre match: pop (+2.0)
+     - mood match: happy (+1.0)
+     - energy 0.82 vs target 0.80 (+1.47)
+     - produced sound fit (+0.41)
+2. Gym Hero by Max Pulse  [pop, intense]
+   Score: 3.78 / 5.00
+     - genre match: pop (+2.0)
+     - energy 0.93 vs target 0.80 (+1.30)
+     - produced sound fit (+0.47)
+3. Rooftop Lights by Indigo Parade  [indie pop, happy]
+   Score: 2.77 / 5.00
+     - mood match: happy (+1.0)
+     - energy 0.76 vs target 0.80 (+1.44)
+     - produced sound fit (+0.33)
+4. Concrete Crown by Block Theory  [hip-hop, confident]
+   Score: 1.91 / 5.00
+     - energy 0.78 vs target 0.80 (+1.47)
+     - produced sound fit (+0.44)
+5. Paper Hearts Riot by The Static Kids  [punk, rebellious]
+   Score: 1.82 / 5.00
+     - energy 0.89 vs target 0.80 (+1.36)
+     - produced sound fit (+0.46)
 ```
+
+This matches intuition: *Sunrise City* is the only song that is pop **and** happy with energy right at the target, so it wins by a full point. *Gym Hero* comes second because the +2.0 genre bonus outweighs its "intense" mood, while *Rooftop Lights* (indie pop, happy) is a better vibe match but loses the genre points because "indie pop" is not an exact match for "pop".
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or demo video link here -->
 
